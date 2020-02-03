@@ -5,6 +5,7 @@ const bp = require("body-parser");
 app.use(bp.json());
 app.use(bp.urlencoded({ extended: true }));
 app.use(bp.text({ type: "application/json" }));
+const secret = require("./config/password");
 
 //Setting up Headers
 app.use(function(req, res, next) {
@@ -33,8 +34,7 @@ app.use(function(req, res, next) {
 
 //Setting up mongoose
 const mon = require("mongoose");
-const password = require("./config/password");
-const url = `mongodb+srv://alfredoryelcius:${password.mongodb}@stock-watcher-backend-tfkjf.mongodb.net/test?retryWrites=true&w=majority`;
+const url = `mongodb+srv://alfredoryelcius:${secret.mongodb}@stock-watcher-backend-tfkjf.mongodb.net/test?retryWrites=true&w=majority`;
 mon.connect(url, { useNewUrlParser: true, useUnifiedTopology: true });
 const db = mon.connection;
 db.on("error", console.error.bind(console, "connection error:"));
@@ -65,20 +65,50 @@ async function fetchData() {
   return axios.get(url);
 }
 
+//Nodemailer setup
+const nodemailer = require("nodemailer");
+async function sendEmail(msg) {
+  let transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: secret.nodemailerEmail, // generated ethereal user
+      pass: secret.nodemailerPassword // generated ethereal password
+    }
+  });
+
+  let info = await transporter.sendMail({
+    from: "ryelalfredo@gmail.com", // sender address
+    to: "ryelalfredo@gmail.com", // list of receivers
+    subject: "Stock Watcher Notification", // Subject line
+    text: msg,
+    html: msg // html body
+  });
+}
+
 //function to notify user about the price
 function notify(theStock, report) {
-  try {
-    if (theStock.notification.date) {
-      if (new Date() - theStock.notification.date > 60 * 60 * 1000) {
-        //report
-        //update report
-        theStock.notification = {};
-        theStock.notification.report = report;
-      }
-    }
-  } catch {
+  var notifyFlag = false;
+  if (theStock.notification.date === undefined) {
+    var date = new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" });
     theStock.notification = {};
+    theStock.notification.date = new Date(date);
     theStock.notification.report = report;
+    notifyFlag = true;
+  } else {
+    var newDate = new Date().toLocaleString("en-US", {
+      timeZone: "Asia/Jakarta"
+    });
+    newDate = new Date(newDate);
+    if (newDate - theStock.notification.date > 60 * 60 * 1000) {
+      //report
+      //update report
+      theStock.notification.date = newDate;
+      theStock.notification.report = report;
+      notifyFlag = true;
+    }
+  }
+  if (notifyFlag) {
+    sendEmail(report);
   }
   return theStock;
 }
@@ -99,7 +129,7 @@ function checkWatchedStocks(APIStocks, watchedStock) {
       watchedStock,
       `${name} is at ${curPrice}, higher than your set high`
     );
-  } else if (curPrice < watchedStock.priceLow) {
+  } else if (curPrice < priceLow) {
     watchedStock = notify(
       watchedStock,
       `${name} is at ${curPrice}, lower than your set low`
@@ -134,6 +164,7 @@ app.listen(port, () => {
         }
       }
     }
+
     if (run) {
       fetchData().then(response => {
         var data = response.data;
